@@ -785,8 +785,8 @@ int pmfs_statfs(struct dentry *d, struct kstatfs *buf)
 	buf->f_type = PMFS_SUPER_MAGIC;
 	buf->f_bsize = sb->s_blocksize;
 
-	count = sbi->block_end_2;
-	buf->f_blocks = (sbi->initsize + sbi->initsize_2) / sbi->blocksize;
+	count = sbi->block_end_1 + sbi->block_end_1;
+	buf->f_blocks = count;
 	buf->f_bfree = buf->f_bavail = pmfs_count_free_blocks(sb);
 	buf->f_files = (sbi->s_inodes_count);
 	buf->f_ffree = (sbi->s_free_inodes_count);
