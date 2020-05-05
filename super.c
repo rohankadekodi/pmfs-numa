@@ -378,7 +378,6 @@ static struct pmfs_inode *pmfs_init(struct super_block *sb,
 	pmfs_dbg_verbose("pmfs: Default block size set to 4K\n");
 	blocksize = sbi->blocksize = PMFS_DEF_BLOCK_SIZE_4K;
 
-	pmfs_info("pmfs setting blocksize\n");
 	pmfs_set_blocksize(sb, blocksize);
 	blocksize = sb->s_blocksize;
 
@@ -415,7 +414,6 @@ static struct pmfs_inode *pmfs_init(struct super_block *sb,
 		journal_data_start, sbi->jsize, inode_table_start);
 	pmfs_dbg_verbose("max file name len %d\n", (unsigned int)PMFS_NAME_LEN);
 
-	pmfs_info("calling pmfs_get_super\n");
 	super = pmfs_get_super(sb);
 	pmfs_memunlock_range(sb, super, journal_data_start);
 
@@ -427,7 +425,6 @@ static struct pmfs_inode *pmfs_init(struct super_block *sb,
 	super->s_journal_offset = cpu_to_le64(journal_meta_start);
 	super->s_inode_table_offset = cpu_to_le64(inode_table_start);
 
-	printk(KERN_INFO "%s: calling pmfs_init_blockmap\n", __func__);
 	pmfs_init_blockmap(sb, journal_data_start + sbi->jsize);
 	pmfs_memlock_range(sb, super, journal_data_start);
 
