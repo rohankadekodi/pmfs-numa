@@ -352,10 +352,14 @@ struct pmfs_sb_info {
 	 */
 	struct block_device *s_bdev;
 	phys_addr_t	phys_addr;
+	phys_addr_t	phys_addr_2;
 	void		*virt_addr;
+	void		*virt_addr_2;
 	struct list_head block_inuse_head;
-	unsigned long	block_start;
-	unsigned long	block_end;
+	unsigned long	block_start_1;
+	unsigned long	block_end_1;
+	unsigned long	block_start_2;
+	unsigned long	block_end_2;
 	unsigned long	num_free_blocks;
 	struct mutex 	s_lock;	/* protects the SB's buffer-head */
 
@@ -371,6 +375,7 @@ struct pmfs_sb_info {
 	unsigned long	num_inodes;
 	unsigned long	blocksize;
 	unsigned long	initsize;
+	unsigned long	initsize_2;
 	unsigned long	s_mount_opt;
 	kuid_t		uid;    /* Mount uid for root directory */
 	kgid_t		gid;    /* Mount gid for root directory */
@@ -595,8 +600,14 @@ static inline struct pmfs_inode *pmfs_get_inode(struct super_block *sb,
 static inline u64
 pmfs_get_addr_off(struct pmfs_sb_info *sbi, void *addr)
 {
-	PMFS_ASSERT((addr >= sbi->virt_addr) &&
-			(addr < (sbi->virt_addr + sbi->initsize)));
+	unsigned long first_virt_start = (unsigned long) sbi->virt_addr;
+	unsigned long first_virt_end = first_virt_start + (unsigned long) sbi->initsize;
+	unsigned long second_virt_start = (unsigned long) sbi->virt_addr_2;
+	unsigned long second_virt_end = second_virt_start + (unsigned long) sbi->initsize_2;
+
+	PMFS_ASSERT(((unsigned long) addr >= first_virt_start) &&
+		    ((unsigned long) addr < second_virt_end) &&
+		    ((unsigned long) addr < first_virt_end || (unsigned long) addr >= second_virt_start))
 	return (u64)(addr - sbi->virt_addr);
 }
 

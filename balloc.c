@@ -35,8 +35,8 @@ void pmfs_init_blockmap(struct super_block *sb, unsigned long init_used_size)
 	blknode = pmfs_alloc_blocknode(sb);
 	if (blknode == NULL)
 		PMFS_ASSERT(0);
-	blknode->block_low = sbi->block_start;
-	blknode->block_high = sbi->block_start + num_used_block - 1;
+	blknode->block_low = sbi->block_start_1;
+	blknode->block_high = sbi->block_start_1 + num_used_block - 1;
 	sbi->num_free_blocks -= num_used_block;
 	list_add(&blknode->link, &sbi->block_inuse_head);
 }
@@ -171,15 +171,23 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 	list_for_each_entry(i, head, link) {
 		if (i->link.next == head) {
 			next_i = NULL;
-			next_block_low = sbi->block_end;
+			next_block_low = sbi->block_end_2;
 		} else {
 			next_i = list_entry(i->link.next, typeof(*i), link);
 			next_block_low = next_i->block_low;
 		}
-
+		
 		new_block_low = (i->block_high + num_blocks) & ~(num_blocks - 1);
 		new_block_high = new_block_low + num_blocks - 1;
-
+		if (new_block_low >= sbi->block_end_1 && new_block_low < sbi->block_start_2) {
+			new_block_low = sbi->block_start_2;
+			new_block_low = (new_block_low + num_blocks) & ~(num_blocks - 1);
+			new_block_high = new_block_low + num_blocks - 1;
+		} else if (new_block_high >= sbi->block_end_1 && new_block_high < sbi->block_start_2) {
+			printk(KERN_INFO "%s: new_block_low = %lu. new_block_high = %lu. block_end_1 = %lu. block_start_2 = %lu\n", __func__, new_block_low, new_block_high, sbi->block_end_1, sbi->block_start_2);
+			BUG();
+		}
+		
 		if (new_block_high >= next_block_low) {
 			/* Does not fit - skip to next blocknode */
 			continue;
