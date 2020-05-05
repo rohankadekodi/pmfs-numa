@@ -103,9 +103,9 @@ static int pmfs_get_block_info(struct super_block *sb,
 	struct pmfs_sb_info *sbi)
 {
 	struct dax_device *dax_dev;
-	void *virt_addr = NULL;
-	pfn_t __pfn_t;
-	long size;
+	void *virt_addr = NULL, *virt_addr_2 = NULL;
+	pfn_t __pfn_t, __pfn_t_2;
+	long size, size_2;
 	int ret;
 
 	ret = bdev_dax_supported(sb, PAGE_SIZE);
@@ -127,11 +127,23 @@ static int pmfs_get_block_info(struct super_block *sb,
 		pmfs_err(sb, "direct_access failed\n");
 		return -EINVAL;
 	}
+	printk(KERN_INFO "%s: direct access returned size = %lu\n", __func__, size);
 
+	size_2 = dax_direct_access(dax_dev, ((size) / PAGE_SIZE), LONG_MAX/PAGE_SIZE,
+				  &virt_addr_2, &__pfn_t_2) * PAGE_SIZE;
+	if (size_2 <= 0) {
+		pmfs_err(sb, "second direct access failed\n");
+		return -EINVAL;
+	}
+	printk(KERN_INFO "%s: second direct access returned size = %lu\n", __func__, size_2);
+    
 	sbi->virt_addr = virt_addr;
+	sbi->virt_addr_2 = virt_addr_2;
 	sbi->phys_addr = pfn_t_to_pfn(__pfn_t) << PAGE_SHIFT;
+	sbi->phys_addr_2 = pfn_t_to_pfn(__pfn_t_2) << PAGE_SHIFT;
 	sbi->initsize = size;
-
+	sbi->initsize_2 = size_2;
+	
 	return 0;
 }
 
@@ -333,7 +345,7 @@ static bool pmfs_check_size (struct super_block *sb, unsigned long size)
 
 
 static struct pmfs_inode *pmfs_init(struct super_block *sb,
-				      unsigned long size)
+				    unsigned long size, unsigned long size_2)
 {
 	unsigned long blocksize;
 	u64 journal_meta_start, journal_data_start, inode_table_start;
@@ -342,11 +354,17 @@ static struct pmfs_inode *pmfs_init(struct super_block *sb,
 	struct pmfs_sb_info *sbi = PMFS_SB(sb);
 	struct pmfs_direntry *de;
 	unsigned long blocknr;
-
-	pmfs_info("creating an empty pmfs of size %lu\n", size);
-	sbi->block_start = (unsigned long)0;
-	sbi->block_end = ((unsigned long)(size) >> PAGE_SHIFT);
-	sbi->num_free_blocks = ((unsigned long)(size) >> PAGE_SHIFT);
+	unsigned long second_virt_start = (unsigned long) sbi->virt_addr_2;
+	unsigned long first_virt_start = (unsigned long) sbi->virt_addr;
+	unsigned long first_virt_end = first_virt_start + (unsigned long) sbi->initsize;
+	unsigned long second_virt_end = second_virt_start + (unsigned long) sbi->initsize_2;
+	
+	pmfs_info("creating an empty pmfs of size %lu\n", size + size_2);
+	sbi->block_start_1 = (unsigned long)0;
+	sbi->block_end_1 = ((unsigned long)(size) >> PAGE_SHIFT);
+	sbi->block_start_2 = sbi->block_end_1 + ((second_virt_start - first_virt_end + 1) / PAGE_SIZE);
+	sbi->block_end_2 = sbi->block_start_2 + (unsigned long) (size_2 >> PAGE_SHIFT);
+	sbi->num_free_blocks = ((unsigned long)(size + size_2) >> PAGE_SHIFT);
 
 	if (!sbi->virt_addr) {
 		printk(KERN_ERR "ioremap of the pmfs image failed(1)\n");
@@ -360,6 +378,7 @@ static struct pmfs_inode *pmfs_init(struct super_block *sb,
 	pmfs_dbg_verbose("pmfs: Default block size set to 4K\n");
 	blocksize = sbi->blocksize = PMFS_DEF_BLOCK_SIZE_4K;
 
+	pmfs_info("pmfs setting blocksize\n");
 	pmfs_set_blocksize(sb, blocksize);
 	blocksize = sb->s_blocksize;
 
@@ -396,17 +415,19 @@ static struct pmfs_inode *pmfs_init(struct super_block *sb,
 		journal_data_start, sbi->jsize, inode_table_start);
 	pmfs_dbg_verbose("max file name len %d\n", (unsigned int)PMFS_NAME_LEN);
 
+	pmfs_info("calling pmfs_get_super\n");
 	super = pmfs_get_super(sb);
 	pmfs_memunlock_range(sb, super, journal_data_start);
 
 	/* clear out super-block and inode table */
 	memset_nt(super, 0, journal_data_start);
-	super->s_size = cpu_to_le64(size);
+	super->s_size = cpu_to_le64(size + size_2);
 	super->s_blocksize = cpu_to_le32(blocksize);
 	super->s_magic = cpu_to_le16(PMFS_SUPER_MAGIC);
 	super->s_journal_offset = cpu_to_le64(journal_meta_start);
 	super->s_inode_table_offset = cpu_to_le64(inode_table_start);
 
+	printk(KERN_INFO "%s: calling pmfs_init_blockmap\n", __func__);
 	pmfs_init_blockmap(sb, journal_data_start + sbi->jsize);
 	pmfs_memlock_range(sb, super, journal_data_start);
 
@@ -619,9 +640,9 @@ static int pmfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (arch_has_clwb()) {
 		pmfs_info("arch has CLWB support\n");
 		support_clwb = 1;
-    } else if (arch_has_clflushopt()) {
-        pmfs_info("arch has CLFLUSHOPT support\n");
-        support_clflushopt = 1;
+	} else if (arch_has_clflushopt()) {
+		pmfs_info("arch has CLFLUSHOPT support\n");
+		support_clflushopt = 1;
 	} else {
 		pmfs_info("arch does not have CLWB support\n");
 	}
@@ -660,7 +681,7 @@ static int pmfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* Init a new pmfs instance */
 	if (sbi->s_mount_opt & PMFS_MOUNT_FORMAT) {
-		root_pi = pmfs_init(sb, sbi->initsize);
+		root_pi = pmfs_init(sb, sbi->initsize, sbi->initsize_2);
 		if (IS_ERR(root_pi))
 			goto out;
 		super = pmfs_get_super(sb);
@@ -764,8 +785,8 @@ int pmfs_statfs(struct dentry *d, struct kstatfs *buf)
 	buf->f_type = PMFS_SUPER_MAGIC;
 	buf->f_bsize = sb->s_blocksize;
 
-	count = sbi->block_end;
-	buf->f_blocks = sbi->block_end;
+	count = sbi->block_end_2;
+	buf->f_blocks = (sbi->initsize + sbi->initsize_2) / sbi->blocksize;
 	buf->f_bfree = buf->f_bavail = pmfs_count_free_blocks(sb);
 	buf->f_files = (sbi->s_inodes_count);
 	buf->f_ffree = (sbi->s_free_inodes_count);

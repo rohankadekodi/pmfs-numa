@@ -324,17 +324,31 @@ static int pmfs_alloc_insert_blocknode_map(struct super_block *sb,
 	unsigned long next_block_low;
 	unsigned long new_block_low;
 	unsigned long new_block_high;
-
+	int flag = 0;
+	unsigned long diff_from_end;
 	//num_blocks = pmfs_get_numblocks(btype);
 
 	new_block_low = low;
 	new_block_high = high;
 	num_blocks = high - low + 1;
 
+	if (new_block_low >= sbi->block_end_1) {
+		diff_from_end = new_block_low - sbi->block_end_1;
+		new_block_low = sbi->block_start_2 + diff_from_end;
+		new_block_high = new_block_low + num_blocks - 1;
+	} else if (new_block_high >= sbi->block_end_1) {
+		//BUG();
+		new_block_high = sbi->block_end_1 - 1;
+		num_blocks = high - low + 1;
+		flag = 1;
+	}	
+
+ again:
+	
 	list_for_each_entry(i, head, link) {
 		if (i->link.next == head) {
 			next_i = NULL;
-			next_block_low = sbi->block_end;
+			next_block_low = sbi->block_end_2;
 		} else {
 			next_i = list_entry(i->link.next, typeof(*i), link);
 			next_block_low = next_i->block_low;
@@ -419,6 +433,13 @@ static int pmfs_alloc_insert_blocknode_map(struct super_block *sb,
 		return -ENOSPC;
 	}
 
+	if (flag == 1) {
+		new_block_low = sbi->block_start_2;
+		new_block_high = high;
+		num_blocks = new_block_high - new_block_low + 1;
+		found = 0;
+		goto again;
+	}
 
 	return errval;
 }
@@ -464,9 +485,15 @@ int pmfs_setup_blocknode_map(struct super_block *sb)
 	pmfs_journal_t *journal = pmfs_get_journal(sb);
 	struct pmfs_sb_info *sbi = PMFS_SB(sb);
 	struct scan_bitmap bm;
-	unsigned long initsize = le64_to_cpu(super->s_size);
+	//unsigned long initsize = le64_to_cpu(super->s_size);
+	unsigned long initsize = sbi->initsize;
+	unsigned long initsize_2 = sbi->initsize_2;
 	bool value = false;
 	timing_t start, end;
+	unsigned long first_virt_start = (unsigned long) sbi->virt_addr;
+	unsigned long first_virt_end = first_virt_start + initsize;
+	unsigned long second_virt_start = (unsigned long) sbi->virt_addr_2;
+	unsigned long second_virt_end = second_virt_start + initsize_2;
 
 	/* Always check recovery time */
 	if (measure_timing == 0)
@@ -475,8 +502,11 @@ int pmfs_setup_blocknode_map(struct super_block *sb)
 	PMFS_START_TIMING(recovery_t, start);
 
 	mutex_init(&sbi->inode_table_mutex);
-	sbi->block_start = (unsigned long)0;
-	sbi->block_end = ((unsigned long)(initsize) >> PAGE_SHIFT);
+	sbi->block_start_1 = (unsigned long)0;
+	sbi->block_end_1 = ((unsigned long)(initsize) >> PAGE_SHIFT);
+	sbi->block_start_2 = sbi->block_end_1 + ((second_virt_start - first_virt_end + 1) >> PAGE_SHIFT);
+	sbi->block_end_2 = sbi->block_start_2 + ((unsigned long)(initsize_2) >> PAGE_SHIFT);
+	
 	
 	value = pmfs_can_skip_full_scan(sb);
 	if (value) {
@@ -485,9 +515,9 @@ int pmfs_setup_blocknode_map(struct super_block *sb)
 	}
 
 	pmfs_dbg("PMFS: Performing failure recovery\n");
-	bm.bitmap_4k_size = (initsize >> (PAGE_SHIFT + 0x3)) + 1;
-	bm.bitmap_2M_size = (initsize >> (PAGE_SHIFT_2M + 0x3)) + 1;
-	bm.bitmap_1G_size = (initsize >> (PAGE_SHIFT_1G + 0x3)) + 1;
+	bm.bitmap_4k_size = ((initsize + initsize_2) >> (PAGE_SHIFT + 0x3)) + 1;
+	bm.bitmap_2M_size = ((initsize + initsize_2) >> (PAGE_SHIFT_2M + 0x3)) + 1;
+	bm.bitmap_1G_size = ((initsize + initsize_2) >> (PAGE_SHIFT_1G + 0x3)) + 1;
 
 	/* Alloc memory to hold the block alloc bitmap */
 	bm.bitmap_4k = kzalloc(bm.bitmap_4k_size, GFP_KERNEL);

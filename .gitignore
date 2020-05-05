@@ -1,0 +1,9 @@
+*.o
+*.sh
+*.ko
+*.cmd
+cscope*
+pmfs.mod.c
+modules.order
+Module.symvers
+.tmp_versions
